@@ -16,6 +16,9 @@
 <title>trucko – לוח נהגים</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet/leaflet-maplibre-gl.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -506,9 +509,32 @@ let popup         = null;
 const map = L.map('map', { center:[31.8,34.9], zoom:7, zoomControl:true });
 map.attributionControl.setPrefix(false);   // הסרת המילה "Leaflet"
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-  attribution:'© OpenStreetMap © CARTO', subdomains:'abcd', maxZoom:19
-}).addTo(map);
+// ── תוסף RTL: מרנדר עברית/ערבית נכון על מפות vector (אחרת התוויות הפוכות) ──
+if (window.maplibregl && maplibregl.getRTLTextPluginStatus &&
+    !['deferred','loaded'].includes(maplibregl.getRTLTextPluginStatus())) {
+  maplibregl.setRTLTextPlugin(
+    'https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.2.3/mapbox-gl-rtl-text.min.js',
+    true
+  );
+}
+
+// ── עזר: מוסיף שכבת אריחי vector בעברית (Liberty) לכל מפת Leaflet ──
+// מחליף את אריחי CARTO ה-raster (שדרשו מפתח API). התוויות בעברית.
+function addHebrewVectorLayer(targetMap) {
+  fetch('https://tiles.openfreemap.org/styles/liberty')
+    .then(r => r.json())
+    .then(style => {
+      style.layers.forEach(layer => {
+        if (layer.type === 'symbol' && layer.layout && layer.layout['text-field']) {
+          layer.layout['text-field'] = ['coalesce', ['get','name:he'], ['get','name:latin'], ['get','name']];
+        }
+      });
+      L.maplibreGL({ style, attribution:'© OpenMapTiles © OpenStreetMap' }).addTo(targetMap);
+    })
+    .catch(err => console.error('שגיאה בטעינת מפת vector:', err));
+}
+
+addHebrewVectorLayer(map);
 
 popup = L.popup({ closeButton:false, offset:[0,-10], className:'tl-popup' });
 
@@ -2400,9 +2426,7 @@ function setMode(mode) {
       setTimeout(() => {
         bMap = L.map('b-map', { center:[31.8,35.0], zoom:7, zoomControl:true });
         bMap.attributionControl.setPrefix(false);   // הסרת המילה "Leaflet"
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-          attribution:'© OpenStreetMap © CARTO', subdomains:'abcd', maxZoom:19
-        }).addTo(bMap);
+        addHebrewVectorLayer(bMap);
         renderBList();
         renderBMarkers();
       }, 100);
