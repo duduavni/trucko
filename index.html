@@ -1491,7 +1491,16 @@ function renderBList() {
       </a>`;
     } else if (s.status === 'delivered' && s.escrow_paid && !s.driver_paid) {
       if (s.dispute_status === 'open') {
-        primaryAction = deliveredStatusBanner(s, 'business');
+        primaryAction = `
+          ${deliveredStatusBanner(s, 'business')}
+          <button onclick="event.stopPropagation();resolveDisputeAndRelease('${s.id}',${s.finalPrice||s.price},'${(getDriverName(s)).replace(/'/g,"\\'")}')"
+            style="width:100%;margin-top:8px;background:linear-gradient(135deg,#22c55e,#16a34a);border:none;color:var(--black);border-radius:9px;padding:10px;cursor:pointer;font-family:inherit;font-weight:800;font-size:13px">
+            ✅ הסתדרנו — שחרר תשלום לנהג
+          </button>
+          <button onclick="event.stopPropagation();cancelDispute('${s.id}')"
+            style="width:100%;margin-top:6px;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:9px;padding:8px;cursor:pointer;font-family:inherit;font-weight:700;font-size:12px">
+            ↩️ בטל דיווח (חזרה להמתנה)
+          </button>`;
       } else {
         primaryAction = `
           ${deliveredStatusBanner(s, 'business')}
@@ -4143,6 +4152,37 @@ async function submitDispute(shipmentId, openedBy) {
   else showToast('📨 הפנייה נשלחה לתמיכה. התשלום שלך ממשיך כרגיל', '#3b82f6');
   loadShipmentsFromDB();
   renderMyShipments();
+}
+
+// ביטול מחלוקת ע"י העסק — חזרה למצב "סופק, ממתין" (בלי שחרור).
+// מפעיל מחדש שעון שחרור אוטומטי של 4 ימים מרגע הביטול.
+async function cancelDispute(shipmentId) {
+  if (!confirm('לבטל את הדיווח ולחזור למצב המתנה רגיל?\nשעון השחרור האוטומטי (4 ימים) יתחיל מחדש.')) return;
+  const autoReleaseIso = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString();
+  const { error } = await sb.from('shipments').update({
+    dispute_status: 'none',
+    dispute_reason: null,
+    dispute_opened_by: null,
+    dispute_opened_at: null,
+    dispute_escalate_at: null,
+    auto_release_at: autoReleaseIso,
+  }).eq('id', shipmentId);
+  if (error) { showToast('שגיאה בביטול: ' + error.message, '#ef4444'); return; }
+  showToast('↩️ הדיווח בוטל — חזרה להמתנה', '#22c55e');
+  loadShipmentsFromDB();
+  renderMyShipments();
+}
+
+// "הסתדרנו" — העסק סוגר את המחלוקת ומשחרר תשלום לנהג מיידית.
+async function resolveDisputeAndRelease(shipmentId, amount, driverName) {
+  if (!confirm(`לסגור את המחלוקת ולשחרר ₪${Math.round(amount*0.90)} לנהג ${driverName}?`)) return;
+  // קודם סוגרים את המחלוקת, אחרת הגנת השחרור תחסום
+  const { error: clearErr } = await sb.from('shipments').update({
+    dispute_status: 'resolved',
+  }).eq('id', shipmentId);
+  if (clearErr) { showToast('שגיאה: ' + clearErr.message, '#ef4444'); return; }
+  // כעת פותחים את חלון השחרור הרגיל
+  openReleasePaymentModal(shipmentId, amount, driverName);
 }
 
 // ══════════════════════════════════════════════════════════════
