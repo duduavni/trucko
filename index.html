@@ -1647,6 +1647,16 @@ function renderBList() {
     if (bFilter === 'bidding') return ['bidding','accepted'].includes(s.status);
     return s.status === bFilter;
   });
+  // מיון: הובלות שדורשות פעולה מהעסק עולות לראש הרשימה
+  // עדיפות: נהגים שאישרו (בחר סופי) > יש הצעות > השאר
+  const actionRank = s => {
+    if (['done','delivered','cancelled'].includes(s.status)) return 0; // מטה
+    if (s.confirmedBidsCount > 0) return 3;  // הכי דחוף - צריך לבחור נהג
+    if (s.bids > 0) return 2;                // יש הצעות לצפייה
+    return 1;                                 // פתוח בלי הצעות
+  };
+  filtered.sort((a,b) => actionRank(b) - actionRank(a));
+
   list.innerHTML = '';
 
   if (!filtered.length) {
@@ -3583,6 +3593,13 @@ function subscribeRealtime() {
       if (currentProfile?.role === 'business') {
         sfxNewBid();
         showToast(`💬 הצעה חדשה! ₪${payload.new.price}`);
+        // התראת Push — כדי שהעסק ידע גם אם אינו מסתכל על המסך
+        const b = payload.new;
+        // ודא שההצעה שייכת להובלה של העסק הזה לפני שליחת התראה
+        const mine = BUSINESS_SHIPMENTS.some(s => s.id === b.shipment_id);
+        if (mine) {
+          sendLocalNotification('הצעה חדשה מנהג! 💬', `התקבלה הצעה על ₪${b.price} — פתח כדי לבחור נהג`, '🚛');
+        }
         loadShipmentsFromDB();
       }
     })
