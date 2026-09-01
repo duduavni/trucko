@@ -889,6 +889,15 @@ async function renderMyShipments() {
       </div>` : `
       <div style="padding:0 14px 14px">
         ${renderTrackingBar(b.shipment_id, (b.status === 'chosen' && (s.status === 'accepted' || !s.status)) ? 'driver_confirmed' : (s.status || 'accepted'), true, b.status, s.escrow_paid)}
+        ${b.status === 'chosen' && !s.escrow_paid ? `
+          <div style="margin-top:10px;background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.25);border-radius:10px;padding:10px 12px;font-size:12px;color:var(--accent);line-height:1.5">
+            ⏳ ממתין שהעסק ישלם לנאמנות כדי לתאם. אם קיבלת עבודה אחרת ואינך יכול להמתין — תוכל להשתחרר.
+          </div>
+          <button onclick="releaseMeFromShipment('${b.shipment_id}',this)"
+            style="width:100%;margin-top:8px;background:transparent;border:1px solid rgba(239,68,68,.35);color:#fca5a5;border-radius:10px;padding:9px;cursor:pointer;font-family:inherit;font-weight:700;font-size:12px">
+            🔓 שחרר אותי מההובלה
+          </button>
+        ` : ''}
         ${s.status === 'delivered' && s.escrow_paid && !s.driver_paid ? `
           <div style="margin-top:10px">${deliveredStatusBanner(s, 'driver')}</div>
           ${s.dispute_status === 'none' || !s.dispute_status ? `
@@ -3658,6 +3667,11 @@ function subscribeRealtime() {
           showToast('😔 הנהג לא יכול לבצע את ההובלה - חזרה לרשימה הפתוחה', '#f59e0b');
           sendLocalNotification('הנהג ביטל', 'ההובלה חזרה להיות פתוחה לנהגים אחרים');
         }
+        // הנהג שנבחר השתחרר לפני תשלום לנאמנות — צריך לבחור נהג אחר
+        if (payload.new.status === 'open' && payload.old?.status !== 'open' && payload.old?.status !== 'accepted') {
+          showToast('🔓 הנהג שנבחר השתחרר מההובלה - בחר נהג אחר', '#f59e0b');
+          sendLocalNotification('הנהג השתחרר', 'הנהג שבחרת לא יכול היה להמתין - ההובלה פתוחה שוב לנהגים אחרים');
+        }
       }
     })
     .on('postgres_changes', { event:'DELETE', schema:'public', table:'shipments' }, () => {
@@ -4165,6 +4179,37 @@ async function declineShipment(shipmentId, btn) {
     loadShipmentsFromDB();
     renderMyShipments();
   }
+}
+
+// שחרור עצמי של הנהג כשנבחר אך העסק טרם שילם לנאמנות.
+// הנהג שקיבל עבודה אחרת יכול לצאת — ההובלה חוזרת להיות פתוחה לנהגים אחרים.
+async function releaseMeFromShipment(shipmentId, btn) {
+  if (!confirm('לשחרר את עצמך מההובלה?\nההובלה תחזור להיות פתוחה לנהגים אחרים, והעסק יעודכן.\nפעולה זו אינה הפיכה.')) return;
+  btn.disabled = true; btn.textContent = '🔓 משחרר...';
+
+  // בטיחות: לא ניתן להשתחרר אם העסק כבר שילם לנאמנות (ההובלה כבר מתואמת)
+  const { data: chk } = await sb.from('shipments').select('escrow_paid, status').eq('id', shipmentId).single();
+  if (chk?.escrow_paid) {
+    showToast('לא ניתן להשתחרר — העסק כבר שילם לנאמנות וההובלה מתואמת', '#f59e0b');
+    btn.disabled = false; btn.textContent = '🔓 שחרר אותי מההובלה';
+    loadShipmentsFromDB();
+    renderMyShipments();
+    return;
+  }
+
+  // החזר את ההובלה לפתוחה + סמן את ההצעה של הנהג כמשוחררת
+  const { error } = await sb.from('shipments')
+    .update({ status: 'open', confirmation_expires_at: null })
+    .eq('id', shipmentId);
+  await sb.from('bids').update({ status: 'released' })
+    .eq('shipment_id', shipmentId)
+    .eq('driver_id', currentUser.id);
+
+  if (error) { showToast('שגיאה בשחרור: '+error.message,'#ef4444'); btn.disabled=false; btn.textContent='🔓 שחרר אותי מההובלה'; return; }
+
+  showToast('🔓 השתחררת מההובלה. היא חזרה להיות פתוחה', '#22c55e');
+  loadShipmentsFromDB();
+  renderMyShipments();
 }
 
 async function updateDeliveryStatus(shipmentId, newStatus, btn) {
