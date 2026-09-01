@@ -1610,6 +1610,7 @@ function editShipment(id) {
   const s = BUSINESS_SHIPMENTS.find(x => x.id === id);
   if (!s) return;
   const isLocked = ['driver_confirmed','pickup','on_the_way','delivered','done'].includes(s.status);
+  const isExpired = s.status === 'open' && s.createdAt && (Date.now() - new Date(s.createdAt).getTime()) > 48*60*60*1000;
   const lockedAttr = isLocked ? 'disabled' : '';
   const lockedStyle = isLocked ? 'opacity:.5;cursor:not-allowed' : '';
   const overlay = document.createElement('div');
@@ -1623,6 +1624,14 @@ function editShipment(id) {
 
       ${isLocked ? `<div style="background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.25);border-radius:10px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:var(--accent);line-height:1.5">
         🔒 הנהג כבר אישר את ההובלה - לא ניתן לשנות מסלול, משקל או מחיר. ניתן לעדכן רק את התיאור/הערות.
+      </div>` : ''}
+
+      ${isExpired ? `<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:12px;margin-bottom:16px">
+        <div style="font-size:12px;color:#fca5a5;line-height:1.5;margin-bottom:8px">⏰ המודעה פג תוקפה (עברו 48 שעות). אפשר לחדש אותה — היא תחזור לראש הרשימה עם שעון חדש, בלי להקים מחדש.</div>
+        <button onclick="reviveShipment('${id}',this)"
+          style="width:100%;background:linear-gradient(135deg,#22c55e,#16a34a);border:none;color:var(--black);border-radius:9px;padding:10px;cursor:pointer;font-family:inherit;font-weight:800;font-size:13px">
+          🔄 חדש מודעה ל-48 שעות נוספות
+        </button>
       </div>` : ''}
 
       <div style="display:flex;gap:10px;margin-bottom:12px">
@@ -1657,6 +1666,25 @@ function editShipment(id) {
           style="width:100%;padding:11px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;outline:none;font-family:inherit;direction:rtl;resize:none">${s.title}</textarea>
       </div>
 
+      ${!isLocked ? `
+      <div style="margin-bottom:14px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:5px">📷 תמונות</div>
+        <div id="edit-img-preview" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          ${(s.images||[]).map(url => `
+            <div data-existing="${url}" style="position:relative;width:80px;height:80px;border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+              <img src="${url}" style="width:100%;height:100%;object-fit:cover">
+              <button onclick="this.parentElement.remove()"
+                style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,.7);border:none;color:#fff;border-radius:50%;width:18px;height:18px;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center;line-height:1">✕</button>
+            </div>`).join('')}
+        </div>
+        <div id="edit-img-drop" onclick="document.getElementById('edit-img-input').click()"
+          style="border:2px dashed var(--border);border-radius:10px;padding:12px;text-align:center;cursor:pointer;font-size:12px;color:var(--muted)">
+          <div style="font-size:22px;margin-bottom:2px">📷</div>
+          <div>לחץ להוספת תמונות</div>
+          <input type="file" id="edit-img-input" accept="image/*" multiple style="display:none" onchange="handleEditImgSelect(this)">
+        </div>
+      </div>` : ''}
+
       <div style="margin-bottom:14px">
         <div style="font-size:12px;color:var(--muted);margin-bottom:5px">📊 סטטוס</div>
         <select id="edit-status" style="${INP};${lockedStyle}" ${lockedAttr}>
@@ -1678,6 +1706,44 @@ function editShipment(id) {
     </div>`;
   overlay.onclick = e => { if(e.target===overlay) overlay.remove(); };
   document.body.appendChild(overlay);
+}
+
+// ── חידוש מודעה שפג תוקפה (איפוס שעון 48 השעות) ──
+async function reviveShipment(id, btn) {
+  btn.textContent = '🔄 מחדש...'; btn.disabled = true;
+  if (currentUser) {
+    const { error } = await sb.from('shipments')
+      .update({ created_at: new Date().toISOString(), status: 'open' })
+      .eq('id', id);
+    if (error) { showToast('שגיאה בחידוש: '+error.message,'#ef4444'); btn.textContent='🔄 חדש מודעה ל-48 שעות נוספות'; btn.disabled=false; return; }
+  }
+  const s = BUSINESS_SHIPMENTS.find(x=>x.id===id);
+  if (s) { s.createdAt = new Date().toISOString(); s.status = 'open'; }
+  btn.closest('[style*=fixed]')?.remove();
+  renderBList();
+  showToast('🔄 המודעה חודשה ל-48 שעות נוספות!','#22c55e');
+  if (currentUser) loadShipmentsFromDB();
+}
+
+// ── בחירת תמונות חדשות בעריכה (מוסיף לתצוגה המקדימה) ──
+function handleEditImgSelect(input) {
+  Array.from(input.files).forEach(file => addEditImgPreview(file));
+}
+function addEditImgPreview(file) {
+  const preview = document.getElementById('edit-img-preview');
+  if (!preview) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const wrap = document.createElement('div');
+    wrap._file = file; // שומר את קובץ ה-File להעלאה בשמירה
+    wrap.style.cssText = 'position:relative;width:80px;height:80px;border-radius:10px;overflow:hidden;border:1px solid var(--border)';
+    wrap.innerHTML = `
+      <img src="${ev.target.result}" style="width:100%;height:100%;object-fit:cover">
+      <button onclick="this.parentElement.remove()"
+        style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,.7);border:none;color:#fff;border-radius:50%;width:18px;height:18px;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center;line-height:1">✕</button>`;
+    preview.appendChild(wrap);
+  };
+  reader.readAsDataURL(file);
 }
 
 async function saveEditShipment(id, btn, isLocked) {
@@ -1707,6 +1773,34 @@ async function saveEditShipment(id, btn, isLocked) {
 
   if (!from || !to) { showToast('נא למלא מוצא ויעד','#ef4444'); btn.textContent='שמור שינויים'; btn.disabled=false; return; }
 
+  // אסוף תמונות: קיימות שנשארו (data-existing) + חדשות שנבחרו (_file)
+  const preview = document.getElementById('edit-img-preview');
+  const keptUrls = [];
+  const newFiles = [];
+  if (preview) {
+    Array.from(preview.children).forEach(el => {
+      if (el.dataset.existing) keptUrls.push(el.dataset.existing);
+      else if (el._file) newFiles.push(el._file);
+    });
+  }
+
+  // העלה תמונות חדשות ל-Storage (אם מחובר)
+  let uploadedUrls = [];
+  if (currentUser && newFiles.length) {
+    btn.textContent = '📤 מעלה תמונות...';
+    for (let i = 0; i < newFiles.length; i++) {
+      const file = newFiles[i];
+      const safeName = file.name.replace(/[^a-zA-Z0-9.]/g, '_');
+      const path = `${currentUser.id}/${Date.now()}_${i}_${safeName}`;
+      const { error: upErr } = await sb.storage.from('shipment-images').upload(path, file);
+      if (upErr) { console.error('שגיאה בהעלאת תמונה:', upErr); continue; }
+      const { data: pub } = sb.storage.from('shipment-images').getPublicUrl(path);
+      if (pub?.publicUrl) uploadedUrls.push(pub.publicUrl);
+    }
+    btn.textContent = 'שומר...';
+  }
+  const finalImages = [...keptUrls, ...uploadedUrls];
+
   // עדכן בסופהבייס אם מחובר
   if (currentUser) {
     const { error } = await sb.from('shipments').update({
@@ -1716,6 +1810,7 @@ async function saveEditShipment(id, btn, isLocked) {
       base_price: parseInt(price)||0,
       title:      title,
       status:     status,
+      image_urls: finalImages,
     }).eq('id', id);
     if (error) { showToast('שגיאה בעדכון: '+error.message,'#ef4444'); btn.textContent='שמור שינויים'; btn.disabled=false; return; }
   }
@@ -1725,6 +1820,7 @@ async function saveEditShipment(id, btn, isLocked) {
   if (s) {
     s.from=from; s.to=to; s.weight=parseInt(weight)||0;
     s.price=parseInt(price)||0; s.title=title; s.status=status;
+    s.images=finalImages;
     s.fromLatLng=cityToLatLng(from); s.toLatLng=cityToLatLng(to);
   }
 
