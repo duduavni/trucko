@@ -257,6 +257,11 @@ body { max-width:100%; font-family:'Segoe UI',Arial,sans-serif; background:var(-
         style="flex-shrink:0;padding:12px 10px;border:none;border-bottom:2.5px solid transparent;background:transparent;color:var(--muted);font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">
         📍 מסביבי
       </button>
+      <div style="width:1px;height:20px;background:var(--border);flex-shrink:0"></div>
+      <button id="adv-filter-btn" onclick="openAdvancedFilters()"
+        style="flex-shrink:0;padding:6px 11px;border-radius:999px;border:1.5px solid var(--border2);background:transparent;color:var(--text2);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">
+        ⚙️ מסננים <span id="adv-filter-count" style="display:none;background:var(--accent);color:var(--black);border-radius:999px;padding:0 5px;font-size:9px;font-weight:800;margin-right:3px"></span>
+      </button>
       <!-- hidden for JS compatibility -->
       <button id="tab-all" style="display:none"></button>
       <button id="tab-mine" style="display:none"></button>
@@ -497,6 +502,8 @@ function getDeliveryStepIndex(status) {
 // ── State ──
 let currentFilter = 'all';
 let citySearch = '';
+// מסננים מתקדמים (צד נהג)
+let advFilters = { vehicle:'', fromCity:'', minPrice:null, maxPrice:null, porters:'', sort:'price' };
 let selectedId    = null;
 let currentPrice  = 0;
 let currentShip   = null;
@@ -956,24 +963,56 @@ function toggleMyShipment(id) {
 
 function getFiltered() {
   const q = citySearch.trim();
-  return SHIPMENTS.filter(s=>{
+  let result = SHIPMENTS.filter(s=>{
     // חיפוש עיר – מסנן לפי שם עיר מוצא/יעד (מעל כל שאר הסינונים)
     if (q) {
       const fromName = (CITIES[s.fromId]?.name || s.fromCity || '');
       const toName   = (CITIES[s.toId]?.name   || s.toCity   || '');
       if (!fromName.includes(q) && !toName.includes(q)) return false;
     }
-    if(currentFilter==='urgent') return s.urgent;
-    if(currentFilter==='all') return true;
-    if(currentFilter==='near') return getDist(s.fromId,s.toId)<80;
-    if(currentFilter==='radius') {
-      if(!userLat) return true;
-      const city=CITIES[s.fromId];
-      if(!city) return false;
-      return haversine(userLat,userLng,city.lat,city.lng)<=radiusKm;
+
+    // ── מסננים מתקדמים ──
+    // סוג רכב: הובלה תואמת אם הרכב הנדרש הוא 'any' או שווה לבחירה
+    if (advFilters.vehicle) {
+      const need = s.vehicle_type || 'any';
+      if (need !== 'any' && need !== advFilters.vehicle) return false;
     }
-    return CITIES[s.fromId]?.region===currentFilter;
-  }).sort((a,b)=>b.price-a.price);
+    // עיר מוצא
+    if (advFilters.fromCity) {
+      const fromName = (CITIES[s.fromId]?.name || s.fromCity || '');
+      if (!fromName.includes(advFilters.fromCity.trim())) return false;
+    }
+    // טווח מחיר
+    if (advFilters.minPrice != null && s.price < advFilters.minPrice) return false;
+    if (advFilters.maxPrice != null && s.price > advFilters.maxPrice) return false;
+    // סבלות
+    if (advFilters.porters === 'yes' && !s.porters_needed) return false;
+    if (advFilters.porters === 'no'  &&  s.porters_needed) return false;
+
+    // ── סינון בסיסי (אזור/קרוב/רדיוס) ──
+    let base = true;
+    if(currentFilter==='urgent') base = s.urgent;
+    else if(currentFilter==='all') base = true;
+    else if(currentFilter==='near') base = getDist(s.fromId,s.toId)<80;
+    else if(currentFilter==='radius') {
+      if(!userLat) base = true;
+      else { const city=CITIES[s.fromId]; base = city ? haversine(userLat,userLng,city.lat,city.lng)<=radiusKm : false; }
+    }
+    else base = CITIES[s.fromId]?.region===currentFilter;
+    return base;
+  });
+
+  // ── מיון ──
+  const sort = advFilters.sort || 'price';
+  if (sort === 'price')      result.sort((a,b)=>b.price-a.price);
+  else if (sort === 'price_asc') result.sort((a,b)=>a.price-b.price);
+  else if (sort === 'date')  result.sort((a,b)=>new Date(a.pickup_date||0)-new Date(b.pickup_date||0));
+  else if (sort === 'near' && userLat) {
+    const d = s => { const c=CITIES[s.fromId]; return c?haversine(userLat,userLng,c.lat,c.lng):9999; };
+    result.sort((a,b)=>d(a)-d(b));
+  } else result.sort((a,b)=>b.price-a.price);
+
+  return result;
 }
 
 // חיפוש עיר בצד הנהג
@@ -993,6 +1032,155 @@ function clearDriverCitySearch() {
   if (clearBtn) clearBtn.style.display = 'none';
   renderList();
   if (typeof renderMarkers === 'function') renderMarkers();
+}
+
+// ══════════════════════════════════════════════════════════════
+// מסננים מתקדמים (צד נהג)
+// ══════════════════════════════════════════════════════════════
+function countActiveAdvFilters() {
+  let n = 0;
+  if (advFilters.vehicle) n++;
+  if (advFilters.fromCity) n++;
+  if (advFilters.minPrice != null || advFilters.maxPrice != null) n++;
+  if (advFilters.porters) n++;
+  if (advFilters.sort && advFilters.sort !== 'price') n++;
+  return n;
+}
+
+function updateAdvFilterBadge() {
+  const badge = document.getElementById('adv-filter-count');
+  const btn   = document.getElementById('adv-filter-btn');
+  const n = countActiveAdvFilters();
+  if (badge) {
+    badge.textContent = n;
+    badge.style.display = n ? 'inline-block' : 'none';
+  }
+  if (btn) {
+    btn.style.borderColor = n ? 'var(--accent)' : 'var(--border2)';
+    btn.style.color = n ? 'var(--accent)' : 'var(--text2)';
+  }
+}
+
+function openAdvancedFilters() {
+  const veh = [
+    ['bike','🛵 דו-גלגלי'],
+    ['van','🚐 טנדר'],
+    ['truck','🚛 משאית'],
+    ['crane','🏗️ מנוף']
+  ];
+  const overlay = document.createElement('div');
+  overlay.id = 'adv-filter-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;z-index:3000;padding:0';
+  overlay.innerHTML = `
+    <div style="background:var(--deep);border:1px solid var(--border);border-radius:20px 20px 0 0;width:100%;max-width:500px;padding:20px;padding-bottom:env(safe-area-inset-bottom,20px);max-height:90vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div style="font-weight:800;font-size:17px">⚙️ מסננים מתקדמים</div>
+        <button onclick="document.getElementById('adv-filter-overlay').remove()" style="background:var(--card);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 12px;cursor:pointer;font-family:inherit">✕</button>
+      </div>
+
+      <!-- סוג רכב -->
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:7px">🚛 סוג רכב</div>
+      <div id="adv-vehicle" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">
+        ${veh.map(([v,t])=>`
+          <button type="button" data-v="${v}" onclick="toggleAdvVehicle('${v}')"
+            style="background:${advFilters.vehicle===v?'rgba(254,201,1,.15)':'var(--card)'};border:1.5px solid ${advFilters.vehicle===v?'var(--accent)':'var(--border)'};color:${advFilters.vehicle===v?'var(--accent)':'var(--text)'};border-radius:20px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">${t}</button>`).join('')}
+      </div>
+
+      <!-- עיר מוצא -->
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:7px">📍 עיר מוצא</div>
+      <div style="position:relative;margin-bottom:16px">
+        <input id="adv-from" value="${(advFilters.fromCity||'').replace(/"/g,'&quot;')}" placeholder="הקלד עיר מוצא..." autocomplete="off"
+          style="width:100%;padding:11px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;outline:none;font-family:inherit;direction:rtl;box-sizing:border-box"
+          oninput="showCitySuggest(this,'adv-from-list')" onblur="setTimeout(()=>hideSuggest('adv-from-list'),200)">
+        <div id="adv-from-list" style="display:none;position:absolute;top:100%;right:0;left:0;background:var(--card);border:1px solid var(--accent);border-radius:0 0 9px 9px;max-height:180px;overflow-y:auto;z-index:999"></div>
+      </div>
+
+      <!-- טווח מחיר -->
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:7px">💰 טווח מחיר (₪)</div>
+      <div style="display:flex;gap:10px;margin-bottom:16px">
+        <input id="adv-min" type="number" value="${advFilters.minPrice ?? ''}" placeholder="ממחיר"
+          style="flex:1;padding:11px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;outline:none;font-family:inherit;box-sizing:border-box">
+        <input id="adv-max" type="number" value="${advFilters.maxPrice ?? ''}" placeholder="עד מחיר"
+          style="flex:1;padding:11px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;outline:none;font-family:inherit;box-sizing:border-box">
+      </div>
+
+      <!-- סבלות -->
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:7px">💪 סבלות</div>
+      <div id="adv-porters" style="display:flex;gap:6px;margin-bottom:16px">
+        ${[['','הכל'],['no','בלי סבלות'],['yes','עם סבלות']].map(([v,t])=>`
+          <button type="button" data-p="${v}" onclick="setAdvPorters('${v}')"
+            style="flex:1;background:${advFilters.porters===v?'rgba(254,201,1,.15)':'var(--card)'};border:1.5px solid ${advFilters.porters===v?'var(--accent)':'var(--border)'};color:${advFilters.porters===v?'var(--accent)':'var(--text)'};border-radius:8px;padding:9px 4px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">${t}</button>`).join('')}
+      </div>
+
+      <!-- מיון -->
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:7px">🔀 מיון לפי</div>
+      <div id="adv-sort" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px">
+        ${[['price','מחיר: גבוה→נמוך'],['price_asc','מחיר: נמוך→גבוה'],['date','תאריך'],['near','קרבה אליי']].map(([v,t])=>`
+          <button type="button" data-s="${v}" onclick="setAdvSort('${v}')"
+            style="background:${advFilters.sort===v?'rgba(254,201,1,.15)':'var(--card)'};border:1.5px solid ${advFilters.sort===v?'var(--accent)':'var(--border)'};color:${advFilters.sort===v?'var(--accent)':'var(--text)'};border-radius:20px;padding:8px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit">${t}</button>`).join('')}
+      </div>
+
+      <div style="display:flex;gap:8px">
+        <button onclick="applyAdvancedFilters()"
+          style="flex:2;background:var(--accent);border:none;color:var(--black);border-radius:10px;padding:13px;cursor:pointer;font-family:inherit;font-weight:800;font-size:14px">
+          ✓ החל מסננים
+        </button>
+        <button onclick="clearAdvancedFilters()"
+          style="flex:1;background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:10px;padding:13px;cursor:pointer;font-family:inherit;font-size:12px">
+          נקה הכל
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function toggleAdvVehicle(v) {
+  advFilters.vehicle = (advFilters.vehicle === v) ? '' : v;
+  document.querySelectorAll('#adv-vehicle button').forEach(b => {
+    const on = b.dataset.v === advFilters.vehicle;
+    b.style.background = on ? 'rgba(254,201,1,.15)' : 'var(--card)';
+    b.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
+    b.style.color = on ? 'var(--accent)' : 'var(--text)';
+  });
+}
+function setAdvPorters(v) {
+  advFilters.porters = v;
+  document.querySelectorAll('#adv-porters button').forEach(b => {
+    const on = b.dataset.p === v;
+    b.style.background = on ? 'rgba(254,201,1,.15)' : 'var(--card)';
+    b.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
+    b.style.color = on ? 'var(--accent)' : 'var(--text)';
+  });
+}
+function setAdvSort(v) {
+  advFilters.sort = v;
+  document.querySelectorAll('#adv-sort button').forEach(b => {
+    const on = b.dataset.s === v;
+    b.style.background = on ? 'rgba(254,201,1,.15)' : 'var(--card)';
+    b.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
+    b.style.color = on ? 'var(--accent)' : 'var(--text)';
+  });
+}
+
+function applyAdvancedFilters() {
+  advFilters.fromCity = document.getElementById('adv-from')?.value.trim() || '';
+  const mn = document.getElementById('adv-min')?.value;
+  const mx = document.getElementById('adv-max')?.value;
+  advFilters.minPrice = mn ? parseInt(mn) : null;
+  advFilters.maxPrice = mx ? parseInt(mx) : null;
+  document.getElementById('adv-filter-overlay')?.remove();
+  updateAdvFilterBadge();
+  renderList();
+  if (typeof renderMarkers === 'function') renderMarkers();
+}
+
+function clearAdvancedFilters() {
+  advFilters = { vehicle:'', fromCity:'', minPrice:null, maxPrice:null, porters:'', sort:'price' };
+  document.getElementById('adv-filter-overlay')?.remove();
+  updateAdvFilterBadge();
+  renderList();
+  if (typeof renderMarkers === 'function') renderMarkers();
+  showToast('🧹 המסננים נוקו');
 }
 
 // ── RADIUS FILTER ──
