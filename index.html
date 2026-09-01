@@ -1655,16 +1655,58 @@ function editShipment(id) {
           <input id="edit-weight" type="number" value="${s.weight}" style="${INP};${lockedStyle}" ${lockedAttr}>
         </div>
         <div style="flex:1">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:5px">📅 תאריך</div>
+          <input id="edit-date" type="date" value="${s.pickup_date ? s.pickup_date.split('T')[0] : ''}" style="${INP};${lockedStyle}" ${lockedAttr}>
+        </div>
+        <div style="flex:1">
           <div style="font-size:12px;color:var(--muted);margin-bottom:5px">₪ מחיר בסיס</div>
           <input id="edit-price" type="number" value="${s.price}" style="${INP};${lockedStyle}" ${lockedAttr}>
         </div>
       </div>
 
+      ${!isLocked ? `
       <div style="margin-bottom:14px">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:5px">📝 תיאור / הערות</div>
-        <textarea id="edit-title" rows="2"
-          style="width:100%;padding:11px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;outline:none;font-family:inherit;direction:rtl;resize:none">${s.title}</textarea>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">🚛 סוג רכב נדרש</div>
+        <input type="hidden" id="edit-vehicle" value="${s.vehicle_type||''}">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          ${[
+            ['bike','דו-גלגלי / קטנוע','משלוחים קלים, עירוני · מסמכים, אוכל'],
+            ['van','טנדר / מסחרית','שכירויות, משלוחים קלים, קרטונים'],
+            ['truck','ואן / משאית קטנה','רהיטים, מוצרי חשמל · 4-8 משטחים'],
+            ['crane','משאית מנוף','חומרי בנייה, ציוד כבד, מנוף']
+          ].map(([v,t,d])=>`
+          <button onclick="selectVehicle('${v}',this)" data-v="${v}"
+            style="text-align:right;padding:12px 11px;border-radius:14px;border:1.5px solid ${s.vehicle_type===v?'var(--accent)':'#E2E8F0'};background:${s.vehicle_type===v?'rgba(254,201,1,.1)':'#ffffff'};font-family:inherit;cursor:pointer;transition:all .18s;display:flex;flex-direction:column;gap:5px">
+            <img src="${VEHICLE_ICONS[v]}" alt="${t}" style="height:46px;width:auto;object-fit:contain;align-self:center;pointer-events:none">
+            <span style="font-size:12.5px;font-weight:800;color:#1e293b">${t}</span>
+            <span style="font-size:9.5px;font-weight:500;color:#64748B;line-height:1.35">${d}</span>
+          </button>`).join('')}
+        </div>
       </div>
+
+      <div style="margin-bottom:14px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:7px">💪 נדרשת סבלות?</div>
+        <input type="hidden" id="edit-porters" value="${s.porters_needed?'yes':'no'}">
+        <div style="display:flex;gap:6px">
+          <button onclick="selectYesNo('edit-porters','yes',this)" data-yn="yes"
+            style="flex:1;padding:9px 4px;border-radius:8px;border:1px solid ${s.porters_needed?'var(--accent)':'var(--border)'};background:${s.porters_needed?'rgba(254,201,1,.1)':'transparent'};color:${s.porters_needed?'var(--accent)':'var(--muted)'};font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;transition:all .18s">כן</button>
+          <button onclick="selectYesNo('edit-porters','no',this)" data-yn="no"
+            style="flex:1;padding:9px 4px;border-radius:8px;border:1px solid ${!s.porters_needed?'var(--accent)':'var(--border)'};background:${!s.porters_needed?'rgba(254,201,1,.1)':'transparent'};color:${!s.porters_needed?'var(--accent)':'var(--muted)'};font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;transition:all .18s">לא</button>
+        </div>
+      </div>` : ''}
+
+      <div style="margin-bottom:14px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:5px">📝 תיאור המוצר</div>
+        <textarea id="edit-title" rows="3"
+          style="width:100%;padding:11px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;outline:none;font-family:inherit;direction:rtl;resize:none;line-height:1.5">${s.title}</textarea>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">פירוט טוב מושך יותר נהגים ומחירים טובים יותר</div>
+      </div>
+
+      ${!isLocked ? `
+      <div style="margin-bottom:14px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:5px">💬 הערות לנהג (אופציונלי)</div>
+        <input id="edit-note" value="${(s.driver_note||'').replace(/"/g,'&quot;')}" placeholder="גישה לחנייה, קומה, מעלית, פירוק/הרכבה..." style="${INP}">
+      </div>` : ''}
 
       ${!isLocked ? `
       <div style="margin-bottom:14px">
@@ -1770,6 +1812,10 @@ async function saveEditShipment(id, btn, isLocked) {
   const weight = document.getElementById('edit-weight').value;
   const price  = document.getElementById('edit-price').value;
   const status = document.getElementById('edit-status').value;
+  const pdate  = document.getElementById('edit-date')?.value || null;
+  const vehicle= document.getElementById('edit-vehicle')?.value || '';
+  const porters= (document.getElementById('edit-porters')?.value === 'yes');
+  const dnote  = document.getElementById('edit-note')?.value || '';
 
   if (!from || !to) { showToast('נא למלא מוצא ויעד','#ef4444'); btn.textContent='שמור שינויים'; btn.disabled=false; return; }
 
@@ -1811,6 +1857,10 @@ async function saveEditShipment(id, btn, isLocked) {
       title:      title,
       status:     status,
       image_urls: finalImages,
+      pickup_date:  pdate || undefined,
+      vehicle_type: vehicle || 'any',
+      porters_needed: porters,
+      driver_note:  dnote,
     }).eq('id', id);
     if (error) { showToast('שגיאה בעדכון: '+error.message,'#ef4444'); btn.textContent='שמור שינויים'; btn.disabled=false; return; }
   }
@@ -1821,6 +1871,9 @@ async function saveEditShipment(id, btn, isLocked) {
     s.from=from; s.to=to; s.weight=parseInt(weight)||0;
     s.price=parseInt(price)||0; s.title=title; s.status=status;
     s.images=finalImages;
+    s.pickup_date=pdate; s.vehicle_type=vehicle||'any';
+    s.porters_needed=porters; s.driver_note=dnote;
+    s.date=formatDate(pdate);
     s.fromLatLng=cityToLatLng(from); s.toLatLng=cityToLatLng(to);
   }
 
@@ -3228,8 +3281,13 @@ async function loadShipmentsFromDB() {
           bids:                s.bids?.length || 0,
           confirmedBidsCount:  confirmedBids.length,
           date:                formatDate(s.pickup_date),
+          pickup_date:         s.pickup_date || null,
           type:                TYPES[0],
           description:         s.description || '',
+          driver_note:         s.driver_note || '',
+          vehicle_type:        s.vehicle_type || '',
+          crane_needed:        !!s.crane_needed,
+          porters_needed:      !!s.porters_needed,
           images:              s.image_urls || [],
           createdAt:           s.created_at || null,
           delivery_proof_urls: s.delivery_proof_urls || [],
