@@ -2017,6 +2017,22 @@ async function saveEditShipment(id, btn, isLocked) {
 
   if (!from || !to) { showToast('נא למלא מוצא ויעד','#ef4444'); btn.textContent='שמור שינויים'; btn.disabled=false; return; }
 
+  // תיקון באג: אם התיאור הוא ברירת המחדל שנגזרה מהערים הישנות, עדכן אותו לערים החדשות.
+  // כך התיאור והודעת הוואטסאפ תמיד תואמים למוצא/יעד הנוכחיים. תיאור אישי לא ישונה.
+  const _s = BUSINESS_SHIPMENTS.find(x=>x.id===id);
+  let finalTitle = title;
+  if (_s) {
+    const oldFrom = _s.from || '';
+    const oldTo   = _s.to   || '';
+    const defaultOld = `הובלה מ${oldFrom} ל${oldTo}`;
+    const defaultOldArrow = `${oldFrom} → ${oldTo}`;
+    const trimmed = (title||'').trim();
+    // אם התיאור זהה לברירת המחדל הישנה (בשני הפורמטים) — חדש אותו לפי הערים החדשות
+    if (trimmed === defaultOld || trimmed === defaultOldArrow || !trimmed) {
+      finalTitle = `הובלה מ${from} ל${to}`;
+    }
+  }
+
   // אסוף תמונות: קיימות שנשארו (data-existing) + חדשות שנבחרו (_file)
   const preview = document.getElementById('edit-img-preview');
   const keptUrls = [];
@@ -2052,7 +2068,7 @@ async function saveEditShipment(id, btn, isLocked) {
       to_city:    to,
       weight:     parseInt(weight)||0,
       base_price: parseInt(price)||0,
-      title:      title,
+      title:      finalTitle,
       status:     status,
       image_urls: finalImages,
       pickup_date:  pdate || undefined,
@@ -2067,7 +2083,7 @@ async function saveEditShipment(id, btn, isLocked) {
   const s = BUSINESS_SHIPMENTS.find(x=>x.id===id);
   if (s) {
     s.from=from; s.to=to; s.weight=parseInt(weight)||0;
-    s.price=parseInt(price)||0; s.title=title; s.status=status;
+    s.price=parseInt(price)||0; s.title=finalTitle; s.status=status;
     s.images=finalImages;
     s.pickup_date=pdate; s.vehicle_type=vehicle||'any';
     s.porters_needed=porters; s.driver_note=dnote;
