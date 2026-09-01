@@ -910,7 +910,7 @@ async function renderMyShipments() {
         ${imagesHtml}
         <div style="display:flex;gap:8px;margin-top:10px">
           ${s.escrow_paid
-            ? `<a href="${waLink(businessPhone, buildAgreementText({from:s.from_city,to:s.to_city,weight:s.weight,date:s.pickup_date?new Date(s.pickup_date).toLocaleDateString('he-IL'):'',price:b.price,title:s.title,ref:(b.shipment_id||'').slice(0,8)}))}" target="_blank" rel="noopener"
+            ? `<a href="${waLink(businessPhone, buildAgreementText({from:s.from_city,to:s.to_city,weight:s.weight,date:s.pickup_date?new Date(s.pickup_date).toLocaleDateString('he-IL'):'',price:b.price,title:s.description,ref:(b.shipment_id||'').slice(0,8)}))}" target="_blank" rel="noopener"
                 style="flex:1;background:rgba(37,211,102,.15);border:1.5px solid rgba(37,211,102,.4);color:#25D366;border-radius:10px;padding:10px;text-decoration:none;font-family:inherit;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:6px">
                 💬 וואטסאפ עם העסק
               </a>`
@@ -1709,7 +1709,7 @@ function renderBList() {
         🔒 שלם לנאמנות ₪${s.finalPrice||s.price} — פתח צ'אט
       </button>`;
     } else if (['driver_confirmed','pickup','on_the_way'].includes(s.status) && s.escrow_paid) {
-      primaryAction = `<a href="${waLink(s.acceptedDriverPhone, buildAgreementText({from:s.from,to:s.to,weight:s.weight,date:s.date,price:s.finalPrice||s.price,title:s.title,ref:(s.id||'').slice(0,8)}))}" target="_blank" rel="noopener" onclick="event.stopPropagation()"
+      primaryAction = `<a href="${waLink(s.acceptedDriverPhone, buildAgreementText({from:s.from,to:s.to,weight:s.weight,date:s.date,price:s.finalPrice||s.price,title:s.description,ref:(s.id||'').slice(0,8)}))}" target="_blank" rel="noopener" onclick="event.stopPropagation()"
         style="width:100%;background:rgba(37,211,102,.15);border:1px solid rgba(37,211,102,.4);color:#25D366;border-radius:9px;padding:10px;text-decoration:none;font-family:inherit;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;gap:6px">
         💬 וואטסאפ עם הנהג
       </a>`;
@@ -1895,8 +1895,8 @@ function editShipment(id) {
 
       <div style="margin-bottom:14px">
         <div style="font-size:12px;color:var(--muted);margin-bottom:5px">📝 תיאור המוצר</div>
-        <textarea id="edit-title" rows="3"
-          style="width:100%;padding:11px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;outline:none;font-family:inherit;direction:rtl;resize:none;line-height:1.5">${s.title}</textarea>
+        <textarea id="edit-desc" rows="3"
+          style="width:100%;padding:11px 13px;background:var(--card);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;outline:none;font-family:inherit;direction:rtl;resize:none;line-height:1.5">${s.description||''}</textarea>
         <div style="font-size:10px;color:var(--muted);margin-top:3px">פירוט טוב מושך יותר נהגים ומחירים טובים יותר</div>
       </div>
 
@@ -1987,20 +1987,20 @@ function addEditImgPreview(file) {
 }
 
 async function saveEditShipment(id, btn, isLocked) {
-  const title  = document.getElementById('edit-title').value;
+  const desc  = document.getElementById('edit-desc')?.value || '';
   btn.textContent = 'שומר...'; btn.disabled = true;
 
   if (isLocked) {
-    // נעול אחרי אישור הנהג - מעדכנים רק תיאור/הערות
+    // נעול אחרי אישור הנהג - מעדכנים רק תיאור המוצר/הערות
     if (currentUser) {
-      const { error } = await sb.from('shipments').update({ title }).eq('id', id);
+      const { error } = await sb.from('shipments').update({ description: desc }).eq('id', id);
       if (error) { showToast('שגיאה בעדכון: '+error.message,'#ef4444'); btn.textContent='שמור שינויים'; btn.disabled=false; return; }
     }
     const s = BUSINESS_SHIPMENTS.find(x=>x.id===id);
-    if (s) s.title = title;
+    if (s) s.description = desc;
     btn.closest('[style*=fixed]').remove();
     renderBList();
-    showToast('✅ ההערות עודכנו');
+    showToast('✅ התיאור עודכן');
     if (currentUser) loadShipmentsFromDB();
     return;
   }
@@ -2017,21 +2017,10 @@ async function saveEditShipment(id, btn, isLocked) {
 
   if (!from || !to) { showToast('נא למלא מוצא ויעד','#ef4444'); btn.textContent='שמור שינויים'; btn.disabled=false; return; }
 
-  // תיקון באג: אם התיאור הוא ברירת המחדל שנגזרה מהערים הישנות, עדכן אותו לערים החדשות.
-  // כך התיאור והודעת הוואטסאפ תמיד תואמים למוצא/יעד הנוכחיים. תיאור אישי לא ישונה.
-  const _s = BUSINESS_SHIPMENTS.find(x=>x.id===id);
-  let finalTitle = title;
-  if (_s) {
-    const oldFrom = _s.from || '';
-    const oldTo   = _s.to   || '';
-    const defaultOld = `הובלה מ${oldFrom} ל${oldTo}`;
-    const defaultOldArrow = `${oldFrom} → ${oldTo}`;
-    const trimmed = (title||'').trim();
-    // אם התיאור זהה לברירת המחדל הישנה (בשני הפורמטים) — חדש אותו לפי הערים החדשות
-    if (trimmed === defaultOld || trimmed === defaultOldArrow || !trimmed) {
-      finalTitle = `הובלה מ${from} ל${to}`;
-    }
-  }
+  // הכותרת (title) נגזרת תמיד מהערים — היא לא "תיאור המוצר".
+  // תיאור המוצר האמיתי נשמר בשדה description.
+  const finalTitle = `הובלה מ${from} ל${to}`;
+
 
   // אסוף תמונות: קיימות שנשארו (data-existing) + חדשות שנבחרו (_file)
   const preview = document.getElementById('edit-img-preview');
@@ -2069,6 +2058,7 @@ async function saveEditShipment(id, btn, isLocked) {
       weight:     parseInt(weight)||0,
       base_price: parseInt(price)||0,
       title:      finalTitle,
+      description: desc,
       status:     status,
       image_urls: finalImages,
       pickup_date:  pdate || undefined,
@@ -2083,7 +2073,7 @@ async function saveEditShipment(id, btn, isLocked) {
   const s = BUSINESS_SHIPMENTS.find(x=>x.id===id);
   if (s) {
     s.from=from; s.to=to; s.weight=parseInt(weight)||0;
-    s.price=parseInt(price)||0; s.title=finalTitle; s.status=status;
+    s.price=parseInt(price)||0; s.title=finalTitle; s.description=desc; s.status=status;
     s.images=finalImages;
     s.pickup_date=pdate; s.vehicle_type=vehicle||'any';
     s.porters_needed=porters; s.driver_note=dnote;
