@@ -1614,9 +1614,9 @@ function editShipment(id) {
   const lockedAttr = isLocked ? 'disabled' : '';
   const lockedStyle = isLocked ? 'opacity:.5;cursor:not-allowed' : '';
   const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:2000;padding:16px';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:2000;padding:16px;overflow-y:auto';
   overlay.innerHTML = `
-    <div style="background:var(--deep);border:1px solid var(--border);border-radius:24px;padding:24px;width:100%;max-width:440px">
+    <div style="background:var(--deep);border:1px solid var(--border);border-radius:24px;padding:24px;width:100%;max-width:440px;max-height:90vh;overflow-y:auto">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
         <div style="font-weight:800;font-size:18px">✏️ עריכת הובלה</div>
         <button onclick="this.closest('[style*=fixed]').remove()" style="background:var(--card);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:5px 11px;cursor:pointer;font-family:inherit">✕</button>
